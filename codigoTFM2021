@@ -1,0 +1,185 @@
+#Establecer working directory
+setwd("~/Documents/UOC/R folder/TFM")
+
+#Instalación paquetes
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(version = "3.12")
+BiocManager::install("GEOquery")
+BiocManager::install("Mus.musculus")
+BiocManager::install("DOSE")
+
+#Cargar paquetes R
+library(edgeR)
+library(Mus.musculus)
+library(Biobase)
+library(org.Mm.eg.db)
+require(gplots)
+
+#Leer datos (Matriz de counts descargada del repositorio de datos)
+seqdata <- read.csv("GSE120336_rawCountMatrix.csv", sep='\t', stringsAsFactors = FALSE)
+sampleinfo <- read.csv("sampleinfo.csv", sep=';', stringsAsFactors = TRUE)
+
+#Preparar DGElist
+head(seqdata)
+rownames(seqdata) <- seqdata$Gene
+countdata <- seqdata[, -c(1:2)]
+
+##Verificar lectura de datos
+head(countdata)
+colnames(countdata)
+
+##Añadir información de los genes evaluados en el experimento (Symbol e identificador de ENSEMBL)
+table(colnames(countdata)==sampleinfo$Sample_title)
+y <- DGEList(countdata)
+y
+geneid <- rownames(y)
+genes <- select(Mus.musculus, keys=geneid, columns=c("SYMBOL", "TXCHROM"), 
+                keytype="ENSEMBL")
+head(genes)
+
+##Eliminar genes duplicados
+genes <- genes[!duplicated(genes$ENSEMBL),]
+y$genes <- genes
+y
+
+##Añadir información de grupos experimentales
+group <- paste(sampleinfo$Genotype,sampleinfo$Treatment,sep=".")
+group <- factor(group)
+y$samples$group <- group
+y$samples$Genotype <- as.factor(sampleinfo$Genotype)
+y$samples$Treatment <- as.factor(sampleinfo$Treatment)
+y$samples
+y$counts
+
+#Filtrado
+##Cargar datos de counts y aplicar logaritmo
+cpm <- cpm(y)
+lcpm <- cpm(y, log=TRUE)
+
+##Calcular media y mediana de los tamaños de librería
+L <- mean(y$samples$lib.size) * 1e-6
+M <- median(y$samples$lib.size) * 1e-6
+c(L, M)
+
+##Resumen datos una vez aplicado el log2
+summary(lcpm)
+
+##Eliminar genes que tienen un nivel de expresión bajo
+table(rowSums(y$counts==0)==16)
+
+keep.exprs <- filterByExpr(y, group=group)
+y <- y[keep.exprs,, keep.lib.sizes=FALSE]
+dim(y)
+
+##Establecer cutoff para los genes con expresión baja. Como el número de counts depende del tamaño de librería, 
+##nos basamos en la media y mediana de tamaños de librería para determinarlo.
+lcpm.cutoff <- log2(10/M + 2/L)
+
+##Gráfico de los datos filtrados. Veremos dos gráficos: (A) Datos sin filtrar, (B) Datos una vez filtrados:
+library(RColorBrewer)
+nsamples <- ncol(y)
+col <- brewer.pal(nsamples, "Paired")
+par(mfrow=c(1,2))
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="A. Raw data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+  den <- density(lcpm[,i])
+  lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", colnames(y), text.col=col, bty="n")
+lcpm <- cpm(y, log=TRUE)
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="B. Filtered data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+  den <- density(lcpm[,i])
+  lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", colnames(y), text.col=col, bty="n")
+
+#Normalización de las distribuciones de expresión de las muestras.
+##Calcular los factores de normalización por el método trimmed mean of M-values (TMM)
+y <- calcNormFactors(y, method = "TMM")
+y$samples$norm.factors
+
+##Duplicación de los datos para usarlos en la representación gráfica y creación de la variable 'norm.factors' (con información del factor de normalización)
+y2 <- y
+y2$samples$norm.factors <- 1
+
+##Representación gráfica de los datos antes de normalizar
+par(mfrow=c(1,2))
+lcpm <- cpm(y2, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="")
+title(main="A. Datos No normalizados",ylab="Log-cpm")
+
+##Calcular los factores de normalización y representación gráfica de los datos normalizados
+y2 <- calcNormFactors(y2)  
+y2$samples$norm.factors
+lcpm <- cpm(y2, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="")
+title(main="B. Datos Normalizados",ylab="Log-cpm")
+
+#Distribución de las muestras (Multi-dimensional scaling plot (MDS) para ver clustering no-supervisado
+lcpm <- cpm(y, log=TRUE)
+col.group <- group
+levels(col.group) <-  brewer.pal(nlevels(col.group), "Set1")
+col.group <- as.character(col.group)
+plotMDS(lcpm, labels=group, col=col.group)
+title(main="Muestras")
+
+#Comparar expresión génica entre muestras
+##Creación de la matriz de diseño donde incluímos a qué grupo experimental corresponde cada muestra
+design<-matrix(c(1,0,0,0,
+                 0,0,0,1,
+                 0,0,1,0,
+                 0,0,0,1,
+                 0,0,0,1,
+                 0,0,0,1,
+                 0,1,0,0,
+                 0,1,0,0,
+                 0,1,0,0,
+                 1,0,0,0,
+                 0,0,1,0,
+                 0,0,0,1,
+                 0,1,0,0,
+                 1,0,0,0,
+                 0,0,1,0,
+                 1,0,0,0), nrow=16, byrow=T)
+colnames(design)<- c("WT.ctl", "KO.ctl", "WT.tam", "KO.tam")
+rownames(design)<- sampleinfo$Sample_title
+design
+
+##Creación de la matriz de contrastes donde se elige qué comparaciones se harán entre grupos
+cont.matrix <- makeContrasts("WT.ctl_WT.tam" = WT.ctl - WT.tam,
+                             "WT.ctl_KO.ctl" = WT.ctl - KO.ctl,
+                             "KO.ctl_KO.tam" = KO.ctl - KO.tam,
+                             levels=design)
+
+##Utilizar la función voom() para 
+v <- voom(y, design, plot=TRUE)
+v
+
+##Creación del modelo lineal para comparar los distintos grupos experimentales
+vfit <- lmFit(v, design)
+vfit <- contrasts.fit(vfit, contrasts=cont.matrix)
+efit <- eBayes(vfit)
+summary(decideTests(efit))
+
+##Voom plot para evaluar como ha sido el filtrado, no debería existir una relación lineal entre la media y la varianza si el filtrado ha sido bueno.
+plotSA(efit, main="Final model: Mean-variance trend")
+
+##Examinar el número de genes diferencialmente expresados en las comparativas que se han determinado en la matriz de contrastes
+tfit <- treat(vfit, lfc=0)
+dt <- decideTests(tfit)
+summary(dt)
+
+##Generar excel de resultados con los genes diferencialmente expresados
+write.fit(tfit, dt, file="results.txt")
+
+#########
+#Análisis de significación biológica
+
+#Cargar datos de la comparación WT ctl vs KO ctl
+gen_wtvsko <- read.csv("resultats wt.ctl vs ko.ctl.csv", sep=';', stringsAsFactors = FALSE)
