@@ -183,3 +183,93 @@ write.fit(tfit, dt, file="results.txt")
 
 #Cargar datos de la comparación WT ctl vs KO ctl
 gen_wtvsko <- read.csv("resultats wt.ctl vs ko.ctl.csv", sep=';', stringsAsFactors = FALSE)
+
+#Instalar paquetes R
+BiocManager::install("clusterProfiler")
+BiocManager::install("pathview")
+BiocManager::install("enrichplot")
+BiocManager::install("DOSE")
+BiocManager::install("simplifyEnrichment")
+
+#Cargar paquetes R
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+#Método GSEA
+##Preparación de los datos
+original_gene_list <- gen_wtvsko$Coef.WT.ctl_KO.ctl
+names(original_gene_list) <- gen_wtvsko$Genes.ENSEMBL
+gene_list<-na.omit(original_gene_list)
+
+##Importante, ordenar los genes según su fold-change
+gene_list = sort(gene_list, decreasing = TRUE)
+
+##Análisis
+gse_result <- gseGO(geneList     = gene_list,
+              OrgDb        = org.Mm.eg.db,
+              ont          = "BP",
+              keyType = "ENSEMBL",
+              minGSSize    = 100,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
+result_gse_GO <-  data.frame(gse_result)
+
+##Representación gráfica del análisis (dotplot, gráfico GSEA y gráfico con los GO terms)
+dotplot(gse_result, showCategory=50)
+
+gseaplot(gse_result, geneSetID = gse_result$ID[1])
+
+plotGOgraph(gse_result)
+
+#Método ORA
+##Análisis
+ora_result <- enrichGO(gene         = gen_wtvsko$Genes.ENSEMBL,
+                 OrgDb         = org.Mm.eg.db,
+                 keyType       = 'ENSEMBL',
+                 ont           = "BP",
+                 pAdjustMethod = "BH",
+                 pvalueCutoff  = 0.01,
+                 qvalueCutoff  = 0.05,
+                 readable= T)
+result_ORA_GO <-  data.frame(ora_result)
+
+##Representación gráfica del análisis (dotplot y gráfico con los GO terms)
+dotplot(ora_result, showCategory=50)
+plotGOgraph(ora_result)
+
+#########
+#Reducción de redundancia de los términos obtenidos
+
+#Función simplify(), se ha usado un cutoff de 0.5 y se simplifcará por p-value.
+##GSEA (simplificación y representación gráfica)
+gsea_result_pvalue <- simplify(gse_result, cutoff=0.5, by="pvalue") 
+dim(gsea_result_pvalue)
+x2 <- pairwise_termsim(gsea_result_pvalue)
+###Representación gráfica de los términos obtenidos después de simplificar
+emapplot(x2)
+dotplot(gsea_result_pvalue, showCategory=50)
+
+
+##ORA (simplificación y representación gráfica)
+ora_result_pvalue <- simplify(ora_result, cutoff=0.5, by="pvalue") 
+dim(ora_result_pvalue)
+x2 <- pairwise_termsim(ora_result_pvalue)
+###Representación gráfica de los términos obtenidos después de simplificar
+emapplot(x2)
+dotplot(ora_result_pvalue, showCategory=50)
+
+#Simplificación con el paquete 'simplifyEnrichment'
+##Cargar paquete de R
+library(simplifyEnrichment)
+
+##Creación del heatmap con simplificación de términos para el resultado obtenido con GSEA
+mat = GO_similarity(result_gse_GO$ID, ont='BP')
+df = simplifyGO(mat)
+
+##Creación del heatmap con simplificación de términos para el resultado obtenido con ORA
+mat = GO_similarity(result_ORA_GO$ID, ont='BP')
+df = simplifyGO(mat)
