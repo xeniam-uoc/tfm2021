@@ -199,22 +199,24 @@ library(org.Mm.eg.db)
 
 #Método GSEA
 ##Preparación de los datos
-original_gene_list <- gen_wtvsko$Coef.WT.ctl_KO.ctl
-names(original_gene_list) <- gen_wtvsko$Genes.ENSEMBL
-gene_list<-na.omit(original_gene_list)
+gen_total <- read.csv("results.csv", sep=';', stringsAsFactors = FALSE)
+
+original_gene_list_gsea <- gen_total$Coef.WT.ctl_KO.ctl
+names(original_gene_list_gsea) <- gen_total$Genes.ENSEMBL
+gene_list_gsea<-na.omit(original_gene_list_gsea)
 
 ##Importante, ordenar los genes según su fold-change
-gene_list = sort(gene_list, decreasing = TRUE)
+gene_list_gsea = sort(gene_list_gsea, decreasing = TRUE)
 
 ##Análisis
-gse_result <- gseGO(geneList     = gene_list,
-              OrgDb        = org.Mm.eg.db,
-              ont          = "BP",
-              keyType = "ENSEMBL",
-              minGSSize    = 100,
-              maxGSSize    = 500,
-              pvalueCutoff = 0.05,
-              verbose      = FALSE)
+gse_result <- gseGO(geneList     = gene_list_gsea,
+                    OrgDb        = org.Mm.eg.db,
+                    ont          = "BP",
+                    keyType = "ENSEMBL",
+                    minGSSize    = 100,
+                    maxGSSize    = 500,
+                    pvalueCutoff = 0.05,
+                    verbose      = FALSE)
 
 result_gse_GO <-  data.frame(gse_result)
 
@@ -241,7 +243,7 @@ result_ORA_GO <-  data.frame(ora_result)
 dotplot(ora_result, showCategory=50)
 plotGOgraph(ora_result)
 
-#########
+########
 #Reducción de redundancia de los términos obtenidos
 
 #Función simplify(), se ha usado un cutoff de 0.5 y se simplifcará por p-value.
@@ -268,8 +270,18 @@ library(simplifyEnrichment)
 
 ##Creación del heatmap con simplificación de términos para el resultado obtenido con GSEA
 mat = GO_similarity(result_gse_GO$ID, ont='BP')
-df = simplifyGO(mat)
+df = simplifyGO(mat, method="dynamicTreeCut")
+df = simplifyGO(mat, method="kmeans")
+df = simplifyGO(mat, method="apcluster")
+
+###Función para comparar todos los métodos de clustering disponibles
+compare_clustering_methods(mat, plot_type = "heatmap")
 
 ##Creación del heatmap con simplificación de términos para el resultado obtenido con ORA
 mat = GO_similarity(result_ORA_GO$ID, ont='BP')
+df = simplifyGO(mat, method="dynamicTreeCut")
+df = simplifyGO(mat, method="kmeans")
 df = simplifyGO(mat)
+###Representación gráfica de los términos obtenidos después de simplificar
+emapplot(x2)
+dotplot(ora_result_pvalue, showCategory=50)
